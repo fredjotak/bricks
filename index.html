@@ -63,13 +63,13 @@
 	</div>
 	<button id="ford">F</button>
 	<!-- <div id="salida">gghh</div> -->
-	<div id="imagenes" style="max-width: 10px; position: absolute;"></div>
+	<div id="imagenes" style="max-width: 10px; position: absolute; left: -500px"></div>
 	<script type="importmap">
 		{
 			"imports": {
-				"three": "./build/three.module.js",
-				"three/addons/": "./jsm/",
-				"three-mesh-bvh": "../../three-mesh-bvh/build_0.7.6/index.module.js"
+				"three": "https://unpkg.com/three@0.139.2/build/three.module.js",
+                "three/addons/": "https://unpkg.com/three@0.139.2/examples/jsm/",
+				"three-mesh-bvh": "https://cdn.jsdelivr.net/npm/three-mesh-bvh@0.7.3/build/index.module.js"
 			}
 		}
 	</script>
@@ -457,6 +457,7 @@ function loadConfig(){
 	loadBannersDescripciones();
 	loadTVKaraoke();
 	loadAllImages360();
+	Swal.fire("Estas listo");
 }
 
 function updateCollider(){
