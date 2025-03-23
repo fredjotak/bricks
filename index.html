@@ -1,0 +1,1352 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>three-mesh-bvh - Character Movement</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+
+    <style type="text/css">
+        html, body {
+            padding: 0;
+            margin: 0;
+            overflow: hidden;
+        }
+
+        canvas {
+            width: 100%;
+            height: 100%;
+        }
+
+		#info {
+			position: absolute;
+			top: 0;
+			width: 100%;
+			color: white;
+			font-family: monospace;
+			text-align: center;
+			padding: 5px 0;
+		}
+
+		a {
+			color: #eee;
+		}
+		#ford {
+			position: absolute;
+			bottom: 10px;
+			left: 10px;
+			width: 30px;
+			height: 30px;
+			user-select: none;
+		}
+		#salida {
+			position: fixed;
+			left: 50px;
+			top: 50px;
+			background: rgba(0, 0, 0, .3);
+			color: white;
+			font-size: 8px;
+			width: 150px;
+			height: 50px;
+			padding: 3px;
+			overflow: scroll;
+		}
+    </style>
+</head>
+<body>
+	<div id="info">
+		Ejemplo básico de movimiento de personaje. Haz clic y arrastra para girar la cámara y usa WASD para moverte.
+	</div>
+	<div>
+		<video id="videoPanda" loop crossOrigin="anonymous" playsinline style="display:none" >
+			<source src="./personal/src-c/video/KungFuPanda2-Trailer2EspaniolLatino.mp4" type='video/mp4; codecs="avc1.42E01E, mp4a.40.2"'>
+		</video>
+		<video id="videoKaraoke" src="./personal/src-c/video-sin-voz/Kjarkas Vivir Junto A ti Karaoke.mp4" loop crossOrigin="anonymous" playsinline style="display:none" type='video/mp4; codecs="avc1.42E01E, mp4a.40.2"'></video>
+	</div>
+	<button id="ford">F</button>
+	<!-- <div id="salida">gghh</div> -->
+	<div id="imagenes" style="max-width: 10px; position: absolute;"></div>
+	<script type="importmap">
+		{
+			"imports": {
+				"three": "../build/three.module.js",
+				"three/addons/": "./jsm/",
+				"three-mesh-bvh": "../../three-mesh-bvh/build_0.7.6/index.module.js"
+			}
+		}
+	</script>
+	<!-- <script src="resources/lista_obj.js"></script> -->
+	<script src="./personal/lib/showdown/dist/showdown.min.js"></script>
+	<script src="./personal/lib/html2canvas/html2canvas_1.4.1.min.js"></script>
+	<script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+    <script type="module">
+import * as THREE from 'three';
+import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import * as BufferGeometryUtils from 'three/addons/utils/BufferGeometryUtils.js';
+import Stats from 'three/addons/libs/stats.module.js';
+import { GUI } from 'three/addons/libs/lil-gui.module.min.js';
+import { Sky } from 'three/addons/objects/Sky.js';
+import { Water as Wat} from 'three/addons/objects/Water2.js'; 
+import { MeshBVH, MeshBVHHelper, StaticGeometryGenerator } from 'three-mesh-bvh'; // './personal/three-mesh-bvh/umd/index.js.map'; //'./personal/three-mesh-bvh/src/index.js';
+
+import { objetos } from './personal/src-c/objetos_impacto.js';
+import { musicas } from './personal/src-c/objetos_con_musica.js';
+import { titulos } from './personal/src-c/objetos_con_textos.js';
+import { descripciones } from './personal/src-c/objetos_con_descripcion.js';
+import { images_360 } from './personal/src-c/imagenes_360.js';
+
+import { PositionalAudioHelper } from 'three/addons/helpers/PositionalAudioHelper.js';
+import { TextGeometry } from 'three/addons/geometries/TextGeometry.js';
+import { FontLoader } from 'three/addons/loaders/FontLoader.js';
+import { TTFLoader } from 'three/addons/loaders/TTFLoader.js';
+import { Font } from 'three/addons/loaders/FontLoader.js';
+
+const params = {
+
+	firstPerson: true, // false
+
+	displayCollider: false,
+	displayBVH: false,
+	visualizeDepth: 10,
+	gravity: - 30,
+	playerSpeed: 20, //10
+	physicsSteps: 5,
+
+	reset: reset,
+
+	openModal: ()=> {
+		Swal.fire({
+			title: 'Selecciona un video',
+			html: '<input type="file" id="videoInput" accept="video/*">',
+			confirmButtonText: 'Confirmar',
+			preConfirm: () => {
+				const file = Swal.getPopup().querySelector('#videoInput').files[0];
+				if (!file) {
+					Swal.showValidationMessage(`Por favor, selecciona un video`);
+				}
+				return file;
+			},
+			allowOutsideClick: () => !Swal.isLoading()
+		}).then((result) => {
+			if (result.isConfirmed) {
+				console.log('KLISTP SD');
+				updateTVKaraoke(result.value);
+			}
+		});
+	},
+	isPlaying: false,
+	play_pause: togglePlayPause,
+	light_visible: false
+
+};
+
+let renderer, camera, scene, clock, gui, stats;
+let environment, collider, visualizer, player, controls;
+let playerIsOnGround = false;
+let fwdPressed = false, bkdPressed = false, lftPressed = false, rgtPressed = false;
+let playerVelocity = new THREE.Vector3();
+let upVector = new THREE.Vector3( 0, 1, 0 );
+let tempVector = new THREE.Vector3();
+let tempVector2 = new THREE.Vector3();
+let tempBox = new THREE.Box3();
+let tempMat = new THREE.Matrix4();
+let tempSegment = new THREE.Line3();
+
+let sun;
+let renderTarget;
+let pmremGenerator;
+let sky;
+
+let barco;
+let video;
+let videoKaraoke, videoKaraokeMaterial, btnPlayPauseKaraoke;
+const SEGUNDOS_TEXTO = 180;
+let light;
+
+init();
+render();
+
+function init() {
+
+	const bgColor = 0x263238 / 2;
+
+	// renderer setup
+	renderer = new THREE.WebGLRenderer( { antialias: true } );
+	renderer.setPixelRatio( window.devicePixelRatio );
+	renderer.setSize( window.innerWidth, window.innerHeight );
+	renderer.setClearColor( bgColor, 1 );
+	renderer.shadowMap.enabled = true;
+	renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+	renderer.outputEncoding = THREE.sRGBEncoding;
+	document.body.appendChild( renderer.domElement );
+
+	// scene setup
+	scene = new THREE.Scene();
+	scene.fog = new THREE.Fog( bgColor, 20, 70 );
+
+	// lights
+	light = new THREE.DirectionalLight( 0xffffff, 1 );
+	light.position.set( 1, 1.5, 1 ).multiplyScalar( 50 );
+	light.shadow.mapSize.setScalar( 2048 );
+	light.shadow.bias = - 1e-4;
+	light.shadow.normalBias = 0.05;
+	light.castShadow = true;
+
+	const shadowCam = light.shadow.camera;
+	shadowCam.bottom = shadowCam.left = - 30;
+	shadowCam.top = 30;
+	shadowCam.right = 45;
+
+	scene.add( light );
+	updateLight();
+	//scene.add( new THREE.HemisphereLight( 0xffffff, 0x223344, 1 ) ); //.4
+
+	// camera setup
+	camera = new THREE.PerspectiveCamera( 75, window.innerWidth / window.innerHeight, 0.1,  1000); //50
+	camera.position.set( 10, 10, - 10 );
+	camera.far = 500; //100
+	camera.updateProjectionMatrix();
+	window.camera = camera;
+
+	clock = new THREE.Clock();
+
+	controls = new OrbitControls( camera, renderer.domElement );
+
+	// stats setup
+	stats = new Stats();
+	document.body.appendChild( stats.dom );
+
+	//loadColliderEnvironment();
+
+	loadConfig();
+
+	// character
+	player = new THREE.Mesh(
+		new RoundedBoxGeometry( 1, 2, 1, 10, .5 ), // ( 1.0, 2.0, 1.0, 10, 0.5 )
+		new THREE.MeshStandardMaterial()
+	);
+	player.geometry.translate( 0, - 0.5, 0 );
+	player.capsuleInfo = {
+		radius: .5, // .5
+		segment: new THREE.Line3( new THREE.Vector3(), new THREE.Vector3( 0, - 1.0, 0.0 ) )
+	};
+	player.castShadow = true;
+	player.receiveShadow = true;
+	player.material.shadowSide = 2;
+	scene.add( player );
+	reset();
+
+	// dat.gui
+	gui = new GUI();
+	gui.add( params, 'firstPerson' ).onChange( v => {
+
+		if ( ! v ) {
+
+			camera
+				.position
+				.sub( controls.target )
+				.normalize()
+				.multiplyScalar( 10 )
+				.add( controls.target );
+
+		}
+
+	} ).name('primera persona');
+	gui.add(params, 'light_visible').onChange( v=> {
+		updateLight();
+	}).name('luz direccional');
+
+	/* const visFolder = gui.addFolder( 'Visualization' );
+	visFolder.add( params, 'displayCollider' );
+	visFolder.add( params, 'displayBVH' );
+	visFolder.add( params, 'visualizeDepth', 1, 20, 1 ).onChange( v => {
+
+		visualizer.depth = v;
+		visualizer.update();
+
+	} );
+	visFolder.open(); */
+
+	const physicsFolder = gui.addFolder( 'Jugador(a)' );
+	/* physicsFolder.add( params, 'physicsSteps', 0, 30, 1 );
+	physicsFolder.add( params, 'gravity', - 100, 100, 0.01 ).onChange( v => {
+
+		params.gravity = parseFloat( v );
+
+	} ); */
+	physicsFolder.add( params, 'playerSpeed', 1, 20 ).name("velocidad jugador");
+	physicsFolder.open();
+
+	const guiKaraoke = gui.addFolder('Karaoke');
+	guiKaraoke.add( params, 'openModal').name('subir video');
+	btnPlayPauseKaraoke = guiKaraoke.add( params , 'play_pause').name('Play');
+	guiKaraoke.add({ restart: restartVideo }, 'restart').name('Reiniciar');
+	guiKaraoke.add({ default: ()=> {updateTVKaraoke()}}, 'default').name('cargar tema por defecto');
+
+	gui.add( params, 'reset' ).name('resetear');
+	gui.open();
+
+	window.addEventListener( 'resize', function () {
+
+		camera.aspect = window.innerWidth / window.innerHeight;
+		camera.updateProjectionMatrix();
+
+		renderer.setSize( window.innerWidth, window.innerHeight );
+
+	}, false );
+
+	window.addEventListener( 'keydown', function ( e ) {
+
+		switch ( e.code ) {
+
+			case 'KeyW': fwdPressed = true; break;
+			case 'KeyS': bkdPressed = true; break;
+			case 'KeyD': rgtPressed = true; break;
+			case 'KeyA': lftPressed = true; break;
+			case 'Space':
+				if ( playerIsOnGround ) {
+
+					playerVelocity.y = 10.0;
+					playerIsOnGround = false;
+
+				}
+
+				break;
+
+		}
+
+	} );
+
+	window.addEventListener( 'keyup', function ( e ) {
+
+		switch ( e.code ) {
+
+			case 'KeyW': fwdPressed = false; break;
+			case 'KeyS': bkdPressed = false; break;
+			case 'KeyD': rgtPressed = false; break;
+			case 'KeyA': lftPressed = false; break;
+
+		}
+
+	} );
+	
+	// control
+	const btnForward = document.querySelector('#ford');
+	btnForward.addEventListener('click', function (e) {
+		fwdPressed = !fwdPressed;
+	});
+
+}
+
+function updateLight(){
+	if(light){
+		light.visible = params.light_visible;
+	}
+}
+
+
+function degToRadian(valor = 0){
+	return valor * (Math.PI / 180);
+}
+
+async function loadObjectData(data){
+	return new Promise((resolve, reject) => {
+		new GLTFLoader().load( data.url, res => {
+			const gltfScene = res.scene;
+			// INIT OPTIONS
+			gltfScene.scale.set( data.escala.x, data.escala.y, data.escala.z );
+			gltfScene.updateMatrixWorld( true );
+			
+			gltfScene.position.set( data.posicion.x, data.posicion.y, data.posicion.z );
+			gltfScene.updateMatrixWorld( true );
+
+			gltfScene.rotation.set( 
+				degToRadian(data.rotacion.x), 
+				degToRadian(data.rotacion.y), 
+				degToRadian(data.rotacion.z) 
+			);
+			gltfScene.updateMatrixWorld( true );
+
+			function traverseAndHide(object, lista) {
+				object.traverse(function(child) {
+					if (child.isMesh && lista.some(nombre => child.name == nombre)) {
+						// Aquí puedes poner la lógica para identificar las mallas que deseas ocultar
+						//if (child.name == '') {
+							child.visible = false; // Ocultar la malla
+						//}
+					}
+				});
+			}
+
+			if(data.ignorar_mallas.length > 0){
+				traverseAndHide(gltfScene, data.ignorar_mallas);
+			}
+		
+			console.log('modelo cargado COLISION: ', data.url);
+			scene.add(gltfScene);
+			environment.add(gltfScene);
+			updateCollider();
+
+			if(data.clones.length > 0){
+				
+				for(let a=0; a<data.clones.length; a++){
+					const clonado = gltfScene.clone();
+					clonado.position.set( data.clones[a].posicion.x, data.clones[a].posicion.y, data.clones[a].posicion.z );
+					clonado.rotation.set( 
+						degToRadian(data.clones[a].rotacion.x), 
+						degToRadian(data.clones[a].rotacion.y), 
+						degToRadian(data.clones[a].rotacion.z) 
+					);
+					clonado.updateMatrixWorld( true );
+					scene.add(clonado);
+					environment.add(clonado);
+				}
+				updateCollider();
+			}
+
+			resolve();
+		}, undefined, reject ); //(err) => {return 0;}
+	});
+}
+
+async function loadAll(){
+	/* const salida = document.querySelector('#salida');
+	salida.innerHTML = '<b>SALIDA:<b/> <br>';
+	let posX = 0, posZ = 0;
+	const distancia = 5;
+	const altura = 3; */
+	for(let i=0; i<objetos.length; i++){ 
+		try {
+			console.log('esss', objetos[i]);
+			
+			loadObjectData(objetos[i]);
+    	} catch (error) {
+			console.error('Error:', error);
+			//salida.innerHTML += '<b><font color="#0ff">ERROR</font></b>'+ error +' <br>';
+    	}
+	}
+}
+
+
+function loadConfig(){
+	initFog();
+	//initSky();
+	environment = new THREE.Group();
+	Promise.allSettled([
+		//loadModelNew('../../three.js-master/examples/mis_modelos/nuevos/13_story_apartment_low_poly_cities_collection.glb', {x: -10}),
+		//loadModelNew('../../three.js-master/examples/mis_modelos/new/hangar.glb', {x: -30, z: -5, scale: 1.5}),
+		loadSala()
+	]).then(results => {
+		console.log('okk');
+		const successfulLoads = results.filter(result => result.status === "fulfilled");
+        if (successfulLoads.length) {
+			console.log('Models loaded and added to the scene');
+			
+			updateCollider();
+			
+			loadAll();
+		}
+	}).catch(error => {
+		console.error('An error occurred while loading the models:', error);
+	});
+
+	loadBarco();
+	loadVideo();
+	loadAudios();
+	loadFonts();
+	loadBannersDescripciones();
+	loadTVKaraoke();
+	loadAllImages360();
+}
+
+function updateCollider(){
+	removeModel(visualizer);
+	removeModel(collider);
+	removeModel(environment);
+
+	environment.updateMatrixWorld();
+	const staticGenerator = new StaticGeometryGenerator( environment );
+	staticGenerator.attributes = [ 'position' ];
+
+	const mergedGeometry = staticGenerator.generate();
+	mergedGeometry.boundsTree = new MeshBVH( mergedGeometry );
+
+	collider = new THREE.Mesh( mergedGeometry );
+	collider.material.wireframe = true;
+	collider.material.opacity = 0.5;
+	collider.material.transparent = true;
+
+	visualizer = new MeshBVHHelper( collider, params.visualizeDepth );
+	scene.add( visualizer );
+	scene.add( collider );
+	scene.add( environment );
+}
+
+function removeModel(modelo) {
+	//console.log('listo para borrar');
+	if (modelo) {
+		// Eliminar el modelo de la escena
+		scene.remove(modelo);
+		
+		// Recorrer los hijos del modelo y disponer de la geometría y los materiales
+		modelo.traverse((child) => {
+			if (child.geometry) {
+				child.geometry.dispose();
+			}
+			if (child.material) {
+				if (Array.isArray(child.material)) {
+					child.material.forEach((material) => material.dispose());
+				} else {
+					child.material.dispose();
+				}
+			}
+		});
+
+		// Liberar la referencia al modelo
+		modelo = null;
+	}
+}
+
+function initFog(){
+	const loaderTexture = new THREE.TextureLoader();
+	const textureEquirec = loaderTexture.load('./textures/kloofendal_48d_partly_cloudy.jpg', (texture => {
+		console.log('load texturte');
+		texture.mapping = THREE.EquirectangularReflectionMapping; //EquirectangularReflectionMapping;
+		texture.colorSpace = THREE.SRGBColorSpace;
+		scene.background = texture;
+		scene.environment = texture;
+		
+		//scene.fog = texture;
+	}));
+	scene.fog = new THREE.Fog( 0xffffff, 10, 10000 );
+}
+
+function initSky(){
+	sky = new Sky();
+	sky.scale.setScalar( 10000 );
+	scene.add( sky );
+
+	const skyUniforms = sky.material.uniforms;
+
+	skyUniforms[ 'turbidity' ].value = 10;
+	skyUniforms[ 'rayleigh' ].value = 2;
+	skyUniforms[ 'mieCoefficient' ].value = 0.005;
+	skyUniforms[ 'mieDirectionalG' ].value = 0.8;
+	sun = new THREE.Vector3();
+	pmremGenerator = new THREE.PMREMGenerator( renderer );
+	updateSun(5);
+}
+
+function updateSun(time = 0) {
+	const phi = THREE.MathUtils.degToRad( 90 - time ); // parameters.elevation
+	const theta = THREE.MathUtils.degToRad( 0 ); //parameters.azimuth
+
+	console.log(1, 'pi=', phi.toFixed(2), 'time=', time.toFixed(2));
+	sun.setFromSphericalCoords( 1, phi, theta );
+	sky.material.uniforms[ 'sunPosition' ].value.copy( sun );
+	//water.material.uniforms[ 'sunDirection' ].value.copy( sun ).normalize();
+
+	if ( renderTarget !== undefined ) renderTarget.dispose();
+	renderTarget = pmremGenerator.fromScene( sky );
+	scene.environment = renderTarget.texture;
+}
+
+function loadSala(){
+	return new Promise((resolve, reject) => {
+
+		/* const gridX = new THREE.GridHelper( 500, 500 );
+		gridX.rotation.y = - Math.PI / 2;
+		gridX.position.y = -2.1; // -4
+		scene.add(gridX); */
+
+			// crea un cubo rectangular sera la base
+			const texture_af1 = new THREE.TextureLoader().load( './personal/src-c/texturas/2b91fb5a-b075-44a2-a543-41a09c9b14f4.jpg' );
+			texture_af1.repeat.set(5, 5);
+			texture_af1.wrapS = THREE.MirroredRepeatWrapping;
+			texture_af1.wrapT = THREE.MirroredRepeatWrapping;
+			const asfalto_1 = new THREE.Mesh(
+				new THREE.BoxGeometry( 50, 5, 20),
+				new THREE.MeshPhysicalMaterial( {map: texture_af1, side: THREE.DoubleSide, roughness: 0.2, metalness: 0, transparent: false, opacity: .8} ) // color: 0xffff00, 
+			);
+			asfalto_1.position.y = - 5;
+			
+			asfalto_1.updateMatrixWorld( true );
+			scene.add( asfalto_1 );
+			environment.add(asfalto_1);
+		
+			// crear estructura empinada para entrar al agua
+			const texture_asf = new THREE.TextureLoader().load( './personal/src-c/texturas/2b91fb5a-b075-44a2-a543-41a09c9b14f4.jpg' );
+			texture_asf.repeat.set(5, 5);
+			texture_asf.wrapS = THREE.MirroredRepeatWrapping;
+			texture_asf.wrapT = THREE.MirroredRepeatWrapping;
+			const enpinado_asf = new THREE.Mesh(
+				new THREE.CylinderGeometry( 7, 7, 50, 3),
+				new THREE.MeshPhysicalMaterial( { side: THREE.DoubleSide, roughness: 0.2, metalness: 0, transparent: false, opacity: .8, map: texture_asf} ) // color: 0xffff00, 
+			);
+			enpinado_asf.rotation.x =  Math.PI / 70;
+			enpinado_asf.rotation.z =  Math.PI / 2;
+			enpinado_asf.position.z = 13.2;
+			enpinado_asf.position.y = -8.7;
+
+			enpinado_asf.updateMatrixWorld( true );
+			scene.add( enpinado_asf );
+			environment.add(enpinado_asf);
+
+		
+			// crea estructura de pastizal para 
+			const texture_pas = new THREE.TextureLoader().load( './personal/src-c/texturas/OIP_2.jpg' );
+			texture_pas.repeat.set(50, 150);
+			texture_pas.wrapS = THREE.MirroredRepeatWrapping;
+			texture_pas.wrapT = THREE.MirroredRepeatWrapping;
+
+			const suelo_pasto = new THREE.Mesh(
+				new THREE.BoxGeometry( 50, 5, 150),
+				new THREE.MeshPhysicalMaterial( {map: texture_pas, side: THREE.DoubleSide/* , roughness: 0.2, metalness: 0, transparent: true, opacity: .8 */} ) // color: 0xffff00, 
+			);
+			suelo_pasto.position.y = - 5;
+			suelo_pasto.position.x = - 50;
+			suelo_pasto.position.z =  40;
+			
+			suelo_pasto.updateMatrixWorld( true );
+			scene.add( suelo_pasto );
+			environment.add(suelo_pasto);
+
+
+			// crear estructura de suelo arido
+			const texture_arido = new THREE.TextureLoader().load( './personal/src-c/texturas/suelo_arido.jpg' );
+			texture_arido.repeat.set(50, 150);
+			texture_arido.wrapS = THREE.MirroredRepeatWrapping;
+			texture_arido.wrapT = THREE.MirroredRepeatWrapping;
+
+			const suelo_arido = new THREE.Mesh(
+				new THREE.BoxGeometry( 50, 5, 150),
+				new THREE.MeshPhysicalMaterial( {map: texture_arido, side: THREE.DoubleSide/* , roughness: 0.2, metalness: 0, transparent: true, opacity: .8 */} ) // color: 0xffff00, 
+			);
+			suelo_arido.position.y = - 5;
+			suelo_arido.position.x = 50;
+			suelo_arido.position.z =  40;
+			
+			suelo_arido.updateMatrixWorld( true );
+			scene.add( suelo_arido );
+			environment.add(suelo_arido);
+
+
+
+    	let tamanio = 500; //1000
+    	const positionX = 0; // 40
+    	const positionY = -8;
+		const geometry = new THREE.PlaneGeometry( tamanio, tamanio );
+		const texture = new THREE.TextureLoader().load( './personal/texturas/textura-patron-superficie-salar-uyuni-sitio-patrimonio-mundial-unesco-departamento-potosi-bolivia-america-sur_76000-4746.jpg' );
+		texture.repeat.set(50, 50);
+		texture.wrapS = THREE.MirroredRepeatWrapping;
+		texture.wrapT = THREE.MirroredRepeatWrapping;
+		const material = new THREE.MeshPhysicalMaterial( {map: texture, side: THREE.DoubleSide, roughness: 0.2, metalness: 0, transparent: true, opacity: 1} ); // color: 0xffff00, 
+		const plane = new THREE.Mesh( geometry, material );
+		plane.rotation.x = -Math.PI / 2;
+		plane.position.y = positionY;
+		plane.position.x = positionX;
+		plane.receiveShadow = true;
+		plane.updateMatrixWorld( true );
+		//scene.add( plane );
+		environment.add(plane);
+				//render();
+		console.log('Fully');
+				
+		const waterGeometry = new THREE.PlaneGeometry( tamanio, tamanio );
+		const waterflow = new Wat( waterGeometry, {
+			color: '#ddddff', //'#ffffff',
+			scale: 10,//tamanio/2, //tamanio*2,
+			//flowDirection: new THREE.Vector2( params.flowX, params.flowY ),
+			textureWidth: 1024,
+			textureHeight: 1024,
+		} );
+				
+		waterflow.position.y = positionY + 4.8;
+		waterflow.position.x = positionX;
+		waterflow.rotation.x = - Math.PI / 2;
+		waterflow.updateMatrixWorld(true);
+		scene.add( waterflow );
+		
+		resolve();
+	});
+}
+
+function loadBarco(){
+	new GLTFLoader().load( './personal/src-c/glbs/t7_-_barco_a_remos_para_pesca.glb', res => {
+		barco = res.scene;
+		barco.rotation.y = Math.PI /2;
+		barco.position.z = 130;
+		barco.position.y = -2;
+		barco.updateMatrixWorld( true );
+		scene.add(barco);
+	}, undefined, 
+	(err) => {
+		console.error('no se pudo cargar barco: ', err)
+	});
+}
+
+function luces(){
+    //console.log('is ', this.sky);
+    if(sky!==undefined && sky!==null){
+    		const time = performance.now();
+    		const time_phi = time * .01;
+    		updateSun( time_phi );
+    		const angle = (time_phi % 360); // 360 -
+    		
+    		const options = {
+    			turbidity: 10,
+    			rayleigh: 2,
+    			mieCoefficient: 0.005,
+    			mieDirectionalG: .8,
+    			exposure: 1
+			};
+			console.log('IS', angle);
+    		if(angle < 20){
+    			options.turbidity = 20;
+    			options.rayleigh = 2;
+    			options.mieCoefficient = .005;
+    			options.mieDirectionalG = .8;
+    			options.exposure = 1;
+			} else if(angle < 160){
+				options.turbidity = 1;//0
+    			options.rayleigh = .15;
+    			options.mieCoefficient = .1;
+    			options.mieDirectionalG = .8;
+    			options.exposure = .8;
+			} else if(angle < 190){
+				options.turbidity = 20;
+    			options.rayleigh = 4;
+    			options.mieCoefficient = .1;
+    			options.mieDirectionalG = .9;
+    			options.exposure = .3;
+			}
+			
+			const skyUniforms = sky.material.uniforms;
+			skyUniforms[ 'turbidity' ].value = options.turbidity;
+			skyUniforms[ 'rayleigh' ].value = options.rayleigh;
+			skyUniforms[ 'mieCoefficient' ].value = options.mieCoefficient;
+			skyUniforms[ 'mieDirectionalG' ].value = options.mieDirectionalG;
+			renderer.toneMappingExposure = options.exposure;
+		}
+}
+
+function loadVideo(){
+	video = document.querySelector('#videoPanda');
+	//video.play();
+
+	const texture = new THREE.VideoTexture( video );
+	texture.colorSpace = THREE.SRGBColorSpace;
+
+	const plano = new THREE.Mesh(
+		new THREE.PlaneGeometry(16/8.2, 9/10), // 8.5
+		new THREE.MeshPhysicalMaterial({color: 0xffffff, map: texture})
+	);
+	plano.rotation.y = degToRadian(270);
+	plano.position.set(-54.1, -1, 48.3); //0, -1, -.9 para tele
+	scene.add(plano);
+}
+
+function loadAudios(){
+	new GLTFLoader().load( './personal/src-c/glbs/parlante_modificado.glb', res => { //fgm-1_parlante.glb
+		const parlante = res.scene;
+
+		const nodoBuscado = parlante.getObjectByName('Stereo_textured_mesh_Material0_0');
+		if(nodoBuscado){
+			if(nodoBuscado.isMesh){
+				const material = nodoBuscado.material;
+				material.transparent = true;
+				material.opacity = .5;
+			}
+		}
+
+		const listener = new THREE.AudioListener();
+		camera.add( listener );
+
+		const audioLoader = new THREE.AudioLoader();
+		for(let e=0; e<musicas.length; e++){
+			if(musicas[e].sources.length > 0){
+				const url_audio = './personal/src-c/audio/'+ musicas[e].sources[ randomRangeNumber(0, (musicas[e].sources.length - 1) ) ];
+				console.log('CERCA');
+				
+				audioLoader.load( url_audio , function( buffer ) {
+					console.log('RECIBIDO DE MEJOR MANERA');
+					const sound = new THREE.PositionalAudio( listener );
+
+					
+					sound.setBuffer( buffer );
+					sound.setRefDistance( musicas[e].distancia );
+					sound.setDirectionalCone( musicas[e].direccion_cono.angulo_interior, musicas[e].direccion_cono.angulo_exterior, musicas[e].direccion_cono.ganancia_exterior ); // 180, 230, .1
+					sound.loop = true;
+					sound.play();
+
+					const clonado = parlante.clone();
+					console.log(musicas[e]);
+					
+					clonado.scale.set( musicas[e].escala.x, musicas[e].escala.y, musicas[e].escala.z );
+					clonado.position.set( musicas[e].posicion.x, musicas[e].posicion.y, musicas[e].posicion.z );
+					clonado.rotation.set( 
+						degToRadian(musicas[e].rotacion.x), 
+						degToRadian(musicas[e].rotacion.y), 
+						degToRadian(musicas[e].rotacion.z) 
+					);
+					clonado.updateMatrixWorld( true );
+					scene.add(clonado);
+					clonado.add( sound);
+					if(true){
+						const helper = new PositionalAudioHelper( sound );
+						sound.add( helper );
+					}
+				});
+
+				// sin collider
+				//environment.add(clonado);
+			} else {
+				console.log('el recurso'+ musicas[e].nombre +', no tiene recursos');
+			}
+		}
+		
+	}, undefined, 
+	(err) => {
+		console.error('no se pudo cargar barco: ', err)
+	});
+}
+
+function loadFonts(){
+	const loader = new FontLoader();
+	loader.load( './fonts/gentilis_bold.typeface.json', ( font ) => {
+		for (let ic = 0; ic < titulos.length; ic++) {
+			const element = titulos[ic];
+			const geometry = new TextGeometry( element.texto, {
+				font: font,
+				size: element.propiedades.altura,
+				height: element.propiedades.profundidad,
+				curveSegments: element.propiedades.curva_de_segmentos,
+				bevelEnabled: false,
+			} );
+			geometry.computeBoundingBox();
+
+			const materialPhysical = new THREE.MeshPhysicalMaterial({
+				emissiveIntensity: 1.00,
+				reflectivity :0.90,
+				ior:1.500,
+				roughness:0.30,
+				metalness:1.00,
+				clearcoat:0.20,
+				clearcoatRoughness:0.20,
+				iridescence:0.00,
+				sheen:0.00,
+				sheenRoughness:1.00,
+				transmission:0.00,
+				thickness:0.00,
+				transparent:0,
+				opacity:1.00,
+				color: element.propiedades.color,
+				attenuationColor: "#ffffff"
+			});
+
+			const text = new THREE.Mesh(
+				geometry,
+				materialPhysical
+			);
+
+			text.scale.set( element.escala.x, element.escala.y, element.escala.z );
+			text.position.set( element.posicion.x, element.posicion.y, element.posicion.z );
+			text.rotation.set( 
+				degToRadian(element.rotacion.x), 
+				degToRadian(element.rotacion.y), 
+				degToRadian(element.rotacion.z) 
+			);
+			text.updateMatrixWorld( true );
+
+			scene.add(text);
+		}
+		updateCollider();
+	}, null,
+	( error) => {
+		console.error('nose pudo cargar la fuente');
+	});
+
+	//
+	loader.load( './fonts/gentilis_bold.typeface.json', ( font ) => {
+		let contador = SEGUNDOS_TEXTO;
+		const tamanio_texto = 15;
+		const texto_espera = `No te quedes quieta! 
+¡Descubre qué hay cerca! Volvemos en`;
+		const textGeometry = new TextGeometry(`${texto_espera}  ${contador} segundos`, {
+			font: font,
+			size: tamanio_texto,
+			height: 0.2,
+		});
+		const textMaterial = new THREE.MeshBasicMaterial({ color: 0xdd0000 });
+		const textMesh = new THREE.Mesh(textGeometry, textMaterial);
+		textMesh.position.set( 200, 150, 400);
+		textMesh.rotation.y = degToRadian(180);
+		textMesh.updateMatrixWorld( true );
+		scene.add(textMesh);
+
+		const updateText = () => {
+			if (contador > 0) {
+				contador--; // Decrementar el contador
+				textMesh.geometry.dispose(); // Eliminar la geometría anterior
+				textMesh.geometry = new TextGeometry(`${texto_espera} ${contador} segundos`, {
+					font: font,
+					size: tamanio_texto,
+					height: 0.2,
+				});
+			} else {
+				// Cambiar el texto cuando llegue a 0
+				let texto_final = `Te gustaría ir al parque de diversiones? 
+O si prefieres algo más tranquilo, 
+también podemos dar un paseo y charlar. 
+¿Qué te parece?`;
+				textMesh.geometry.dispose();
+				textMesh.geometry = new TextGeometry(texto_final/* 'BIENVENIDO AL MUNDO' */, {
+					font: font,
+					size: tamanio_texto,
+					height: 0.2,
+				});
+				clearInterval(interval); // Detener la actualización
+			}
+		};
+
+		const interval = setInterval(updateText, 1000);
+	}, undefined,
+	( error) => {
+		console.error('nose pudo cargar la fuente para ACTUALIZAR');
+	});
+}
+
+function loadBannersDescripciones(){
+	if(descripciones.length > 0){
+		new GLTFLoader().load( './personal/src-c/glbs/baner_popup_modificado.glb', res => {
+			function cargarImagen(imagen) {
+				return new Promise((resolve, reject) => {
+					imagen.onload = resolve;
+					imagen.onerror = reject;
+				});
+			}
+
+			function generarImagen(container, material){
+				html2canvas(container).then(canvas => {
+					console.log(container);
+					
+					const imagenURL = canvas.toDataURL('image/png');
+					const textureLoader = new THREE.TextureLoader();
+					const textura = textureLoader.load(imagenURL);
+					material.map = textura;
+
+					document.querySelector('#imagenes').removeChild(container);
+				});
+			}
+
+			function procesarBanner(banner, element){
+				return new Promise((resolve) => {
+					banner.scale.set( element.escala.x, element.escala.y, element.escala.z );
+					banner.position.set( element.posicion.x, element.posicion.y, element.posicion.z );
+					banner.rotation.set( 
+						degToRadian(element.rotacion.x), 
+						degToRadian(element.rotacion.y), 
+						degToRadian(element.rotacion.z) 
+					);
+					banner.updateMatrixWorld( true );
+
+					const converter = new showdown.Converter({ tables: true });
+					const nodoBuscado = banner.getObjectByName('Banner_0');
+					if(nodoBuscado){
+						if(nodoBuscado.isMesh){
+							const material = nodoBuscado.material.clone();
+							const html = converter.makeHtml(element.texto);
+
+							const div = document.createElement('div');
+							div.style.color = element.propiedades.color_texto;
+							div.style.background = element.propiedades.color_fondo;
+							div.style.padding = element.propiedades.padding;
+							div.style.width = '400px';
+							div.style.height = '800px';
+							div.innerHTML = html;
+
+							document.querySelector('#imagenes').appendChild( div );
+
+							html2canvas(div).then(canvas_res => {
+								const imagenURL = canvas_res.toDataURL('image/png');
+								const textureLoader = new THREE.TextureLoader();
+								const textura = textureLoader.load(imagenURL, (image) => {
+									//console.log('IMAGEN', imagenURL, element, html);
+									material.map = image;
+									nodoBuscado.material = material; // pinche bug, mo tomo desde ayer 18:00 hasta el dia siguiente de las 08:00
+
+									//document.querySelector('#imagenes').removeChild(div);
+									div.remove();
+									canvas_res.remove();
+									scene.add(banner);
+									resolve();
+								});
+								
+							});
+							
+						}
+					}
+                });
+			}
+
+			( async() => {
+				for (let id = 0; id < descripciones.length; id++) {
+					await procesarBanner(res.scene.clone(), descripciones[id]);
+				}	
+			})();
+			
+			
+		}, undefined, 
+		(err) => {
+			console.error('no se pudo cargar el baner: ', err)
+		});
+	}
+}
+
+function loadTVKaraoke(){ 
+	videoKaraoke = document.querySelector('#videoKaraoke');
+	//videoKaraoke.src = 'https://youtu.be/R1-BTf3_Mys?si=hKiA3hBUUGTa0p89';
+	if(params.isPlaying){
+		videoKaraoke.play();
+	}
+	updatePlayPauseButton();
+
+	const texture = new THREE.VideoTexture( videoKaraoke );
+	texture.colorSpace = THREE.SRGBColorSpace;
+
+	videoKaraokeMaterial = new THREE.MeshPhysicalMaterial({color: '#ffffff', map: texture, roughness: .5, metalness: 1, clearcoat: .5});
+	const plano = new THREE.Mesh(
+		new THREE.PlaneGeometry(16/8.2, 9/9.5), // 8.5
+		videoKaraokeMaterial
+	);
+	plano.rotation.y = degToRadian(270);
+	plano.position.set(-41.6 - .1, 3.5 + .01, 3); //0, -1, -.9 para tele
+	scene.add(plano);
+	
+}
+
+function updateTVKaraoke( file = null){
+	if(videoKaraokeMaterial && videoKaraoke){
+		if(file){
+			videoKaraoke.src = URL.createObjectURL(file);
+		} else {
+			videoKaraoke.src = './personal/src-c/video-sin-voz/Kjarkas Vivir Junto A ti Karaoke.mp4';
+		}
+
+		params.isPlaying = true;
+		videoKaraoke.play();
+		updatePlayPauseButton();
+
+		const videoTexture = new THREE.VideoTexture(videoKaraoke);
+		videoTexture.colorSpace = THREE.SRGBColorSpace;
+		videoKaraokeMaterial.map = videoTexture;
+		videoKaraokeMaterial.needsUpdate = true;
+	}
+}
+
+function togglePlayPause() {
+	if (videoKaraoke) {
+		if (params.isPlaying) {
+			videoKaraoke.pause();
+		} else {
+			videoKaraoke.play();
+		}
+		params.isPlaying = !params.isPlaying;
+		updatePlayPauseButton();
+	}
+}
+function updatePlayPauseButton() {
+	if (btnPlayPauseKaraoke) {
+		btnPlayPauseKaraoke.name(params.isPlaying ? 'Pausa' : 'Play');
+	}
+}
+
+// Función para reiniciar el video
+function restartVideo() {
+	if (videoKaraoke) {
+		videoKaraoke.currentTime = 0;
+		videoKaraoke.play();
+	 	params.isPlaying = true;
+		updatePlayPauseButton();
+	}
+}
+function randomRangeNumber(min, max){
+	return Math.floor(Math.random() * (max - min + 1) + min);
+}
+
+/* *************************** */
+function loadAllImages360(){
+	(async () => {
+		for (let ip = 0; ip < images_360.length; ip++) {
+			try {
+				//const element = images_360[ip];
+				const esfera = await loadTextureObj360(images_360[ip]);
+				if(esfera){
+					scene.add( esfera );
+				}
+			} catch(err){
+				console.error('error imagen 360', err);
+			}
+		}
+	})();
+}
+
+async function loadTextureObj360(options){
+	const texture_loader = new THREE.TextureLoader();
+
+	const geometry = new THREE.SphereGeometry(options.radio);
+	const material = new THREE.MeshStandardMaterial({
+		side: THREE.BackSide
+	});
+
+	const esfera = new THREE.Mesh(geometry, material);
+	
+	const textura = await texture_loader.load(options.source);
+	textura.mapping = THREE.EquirectangularReflectionMapping;
+    textura.colorSpace = THREE.SRGBColorSpace;
+	
+	material.map = textura;
+	material.needsUpdate = true;
+
+	esfera.position.set(options.posicion.x, options.posicion.y, options.posicion.z);
+	esfera.rotation.set(
+		degToRadian(options.rotacion.x),
+		degToRadian(options.rotacion.y),
+		degToRadian(options.rotacion.z),
+	);
+	esfera.updateMatrixWorld( true );
+	return esfera;
+}
+/* *************************** */
+
+function reset() {
+
+	playerVelocity.set( 0, 0, 0 );
+	//player.position.set( 35, 4, 50 );
+	//player.position.set( -60, -1, 37 ); // y = -3 -> 10, 1, 0
+	player.position.set( 10, 1, 0 )
+	camera.position.sub( controls.target );
+	controls.target.copy( player.position );
+	camera.position.add( player.position );
+	controls.update();
+
+}
+
+function updatePlayer( delta ) {
+
+	if ( playerIsOnGround ) {
+
+		playerVelocity.y = delta * params.gravity;
+
+	} else {
+
+		playerVelocity.y += delta * params.gravity;
+
+	}
+
+	player.position.addScaledVector( playerVelocity, delta );
+
+	// move the player
+	const angle = controls.getAzimuthalAngle();
+	if ( fwdPressed ) {
+
+		tempVector.set( 0, 0, - 1 ).applyAxisAngle( upVector, angle );
+		player.position.addScaledVector( tempVector, params.playerSpeed * delta );
+
+	}
+
+	if ( bkdPressed ) {
+
+		tempVector.set( 0, 0, 1 ).applyAxisAngle( upVector, angle );
+		player.position.addScaledVector( tempVector, params.playerSpeed * delta );
+
+	}
+
+	if ( lftPressed ) {
+
+		tempVector.set( - 1, 0, 0 ).applyAxisAngle( upVector, angle );
+		player.position.addScaledVector( tempVector, params.playerSpeed * delta );
+
+	}
+
+	if ( rgtPressed ) {
+
+		tempVector.set( 1, 0, 0 ).applyAxisAngle( upVector, angle );
+		player.position.addScaledVector( tempVector, params.playerSpeed * delta );
+
+	}
+
+	player.updateMatrixWorld();
+
+	// adjust player position based on collisions
+	const capsuleInfo = player.capsuleInfo;
+	tempBox.makeEmpty();
+	tempMat.copy( collider.matrixWorld ).invert();
+	tempSegment.copy( capsuleInfo.segment );
+
+	// get the position of the capsule in the local space of the collider
+	tempSegment.start.applyMatrix4( player.matrixWorld ).applyMatrix4( tempMat );
+	tempSegment.end.applyMatrix4( player.matrixWorld ).applyMatrix4( tempMat );
+
+	// get the axis aligned bounding box of the capsule
+	tempBox.expandByPoint( tempSegment.start );
+	tempBox.expandByPoint( tempSegment.end );
+
+	tempBox.min.addScalar( - capsuleInfo.radius );
+	tempBox.max.addScalar( capsuleInfo.radius );
+
+	collider.geometry.boundsTree.shapecast( {
+
+		intersectsBounds: box => box.intersectsBox( tempBox ),
+
+		intersectsTriangle: tri => {
+
+			// check if the triangle is intersecting the capsule and adjust the
+			// capsule position if it is.
+			const triPoint = tempVector;
+			const capsulePoint = tempVector2;
+
+			const distance = tri.closestPointToSegment( tempSegment, triPoint, capsulePoint );
+			if ( distance < capsuleInfo.radius ) {
+
+				const depth = capsuleInfo.radius - distance;
+				const direction = capsulePoint.sub( triPoint ).normalize();
+
+				tempSegment.start.addScaledVector( direction, depth );
+				tempSegment.end.addScaledVector( direction, depth );
+
+			}
+
+		}
+
+	} );
+
+	// get the adjusted position of the capsule collider in world space after checking
+	// triangle collisions and moving it. capsuleInfo.segment.start is assumed to be
+	// the origin of the player model.
+	const newPosition = tempVector;
+	newPosition.copy( tempSegment.start ).applyMatrix4( collider.matrixWorld );
+
+	// check how much the collider was moved
+	const deltaVector = tempVector2;
+	deltaVector.subVectors( newPosition, player.position );
+
+	// if the player was primarily adjusted vertically we assume it's on something we should consider ground
+	playerIsOnGround = deltaVector.y > Math.abs( delta * playerVelocity.y * 0.25 );
+
+	const offset = Math.max( 0.0, deltaVector.length() - 1e-5 );
+	deltaVector.normalize().multiplyScalar( offset );
+
+	// adjust the player model
+	player.position.add( deltaVector );
+
+	if ( ! playerIsOnGround ) {
+		deltaVector.normalize();
+		playerVelocity.addScaledVector( deltaVector, - deltaVector.dot( playerVelocity ) );
+	} else {
+		playerVelocity.set( 0, 0, 0 );
+	}
+
+	// adjust the camera
+	camera.position.sub( controls.target );
+	controls.target.copy( player.position );
+	camera.position.add( player.position );
+
+	// if the player has fallen too far below the level reset their position to the start
+	if ( player.position.y < - 25 ) {
+
+		reset();
+
+	}
+
+}
+
+function render() {
+
+	stats.update();
+	requestAnimationFrame( render );
+
+	const delta = Math.min( clock.getDelta(), 0.1 );
+	if ( params.firstPerson ) {
+
+		controls.maxPolarAngle = Math.PI;
+		controls.minDistance = 1e-4;
+		controls.maxDistance = 1e-4;
+
+	} else {
+
+		controls.maxPolarAngle = Math.PI / 2;
+		controls.minDistance = 1;
+		controls.maxDistance = 20;
+
+	}
+
+	if ( collider ) {
+
+		collider.visible = params.displayCollider;
+		visualizer.visible = params.displayBVH;
+
+		const physicsSteps = params.physicsSteps;
+
+		for ( let i = 0; i < physicsSteps; i ++ ) {
+
+			updatePlayer( delta / physicsSteps );
+
+		}
+
+	}
+
+	// si esta en lado izquiedo
+	/* if(player){
+		if(player.position.x > 20 ){
+			scene.fog = new THREE.Fog( 0x001122, 1, 15 );
+		} else {
+			scene.fog = new THREE.Fog( 0xffffff, 10, 10000 );
+		}
+	} */
+
+	// TODO: limit the camera movement based on the collider
+	// raycast in direction of camera and move it if it's further than the closest point
+
+	controls.update();
+	luces();
+	renderBarco();
+
+	renderer.render( scene, camera );
+
+	// moviminento
+	function renderBarco(){
+		if(barco){
+			barco.position.x -= .1; //.02
+			if(barco.position.x < -150){
+				barco.position.x = 150;
+			}
+			barco.updateMatrixWorld( true );
+		}
+		if(video && player){
+			function isPlaying(){
+				return !!(video.currentTime > 0 && !video.paused && !video.ended && video.readyState > 2);
+			}
+			if(player.position.z >= 43.68 && player.position.z <= 49.6 && player.position.x >= -60.31 && player.position.x <= -53.19){
+				//console.log('dentro');
+				
+				if(!isPlaying()){
+					video.play();
+				}
+			} else {
+				//console.log('fuera');
+				
+				if(isPlaying()){
+					video.pause();
+				}
+			}
+			//console.log(player.position.x.toFixed(2), player.position.z.toFixed(2) );
+			
+		}
+	}
+
+}
+
+	</script>
+</body>
+</html>
