@@ -109,7 +109,7 @@ const params = {
 	displayBVH: false,
 	visualizeDepth: 10,
 	gravity: - 30,
-	playerSpeed: 20, //10
+	playerSpeed: 10, //10
 	physicsSteps: 5,
 
 	reset: reset,
@@ -755,7 +755,7 @@ function loadAudios(){
 		if(nodoBuscado){
 			if(nodoBuscado.isMesh){
 				const material = nodoBuscado.material;
-				material.transparent = true;
+				material.transparent = false;
 				material.opacity = .5;
 			}
 		}
@@ -793,7 +793,7 @@ function loadAudios(){
 					clonado.updateMatrixWorld( true );
 					scene.add(clonado);
 					clonado.add( sound);
-					if(true){
+					if(false){
 						const helper = new PositionalAudioHelper( sound );
 						sound.add( helper );
 					}
